@@ -188,6 +188,7 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     [self configDefaultMetaDetect];
 }
 
+#pragma mark - private
 - (void)refreshZoomSlider {
     if (self.deviceType == AVCaptureDeviceTypeBuiltInDualCamera) {
         // 双摄像头单独判断
@@ -255,6 +256,34 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     [self.metadataOutput setMetadataObjectsDelegate:self queue:self.sessionQueue];
 }
 
+- (void)tryToResetAutoFocus {
+    if (CGPointEqualToPoint(self.deviceInput.device.focusPointOfInterest, CGPointMake(0.5, 0.5)) && self.deviceInput.device.focusMode == AVCaptureFocusModeContinuousAutoFocus) {
+        NSLog(@"无需再次对焦 %s", __func__);
+    } else {
+        NSLog(@"%s", __func__);
+        NSError *error;
+        [self.deviceInput.device lockForConfiguration:&error];
+        self.deviceInput.device.focusPointOfInterest = CGPointMake(0.5, 0.5);
+        self.deviceInput.device.focusMode = AVCaptureFocusModeContinuousAutoFocus;
+        [self.deviceInput.device unlockForConfiguration];
+        if (error) {
+            NSLog(@"error: %@", error);
+        }
+    }
+}
+
+- (void)focusToPoint:(CGPoint)point {
+    NSError *error;
+    [self.deviceInput.device lockForConfiguration:&error];
+    self.deviceInput.device.focusPointOfInterest = point;
+    self.deviceInput.device.focusMode = AVCaptureFocusModeAutoFocus;
+    [self.deviceInput.device unlockForConfiguration];
+        
+    if (error) {
+        NSLog(@"error: %@", error);
+    }
+}
+
 - (void)configStabilizationModeWithOutput:(AVCaptureOutput *)output device:(AVCaptureDevice *)device {
     AVCaptureVideoStabilizationMode mode = AVCaptureVideoStabilizationModeOff;
     if (self.stabilizationSegment.selectedSegmentIndex == 1) {
@@ -294,8 +323,160 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     });
 }
 
-#pragma mark - action
+- (CGFloat)caculatePhysicsZoomFactorFromLogicZoomFactor:(CGFloat)logicZoomFactor {
+    if (self.minLogicZoomFactor < 1.0) {
+        return logicZoomFactor * 2;
+    }
+    return logicZoomFactor;
+}
 
+- (CGFloat)maxLogicZoomFactorWithDeviceType:(AVCaptureDeviceType)type {
+    CGFloat factor = 10;
+    if (type == AVCaptureDeviceTypeBuiltInTripleCamera) {
+        AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
+        factor = (device.virtualDeviceSwitchOverVideoZoomFactors.lastObject.floatValue / 2) * 5;
+    } else if (type == AVCaptureDeviceTypeBuiltInDualCamera) {
+        if ([self buildDevice:self.devicePosition type:AVCaptureDeviceTypeBuiltInTelephotoCamera]) {
+            AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
+            NSArray<NSNumber *> *factors = device.virtualDeviceSwitchOverVideoZoomFactors;
+            factor = ceil(factors.lastObject.floatValue) * 5;
+        }
+    }
+    return factor;
+}
+
+- (AVCaptureDeviceType)selectDeviceType {
+    AVCaptureDeviceType deviceType;
+    if (self.cameraTypeSegment.selectedSegmentIndex == 0) {
+        // 内置广角摄像头
+        deviceType = AVCaptureDeviceTypeBuiltInWideAngleCamera;
+    } else if (self.cameraTypeSegment.selectedSegmentIndex == 1) {
+        // 内置长焦摄像头
+        deviceType = AVCaptureDeviceTypeBuiltInTelephotoCamera;
+        self.logicZoomFactor = 1.0;
+        self.minLogicZoomFactor = 1.0;
+    } else if (self.cameraTypeSegment.selectedSegmentIndex == 2) {
+        // 内置超广角
+        deviceType = AVCaptureDeviceTypeBuiltInUltraWideCamera;
+    } else if (self.cameraTypeSegment.selectedSegmentIndex == 3) {
+        // 内置双摄摄像头
+        deviceType = AVCaptureDeviceTypeBuiltInDualCamera;
+    } else if (self.cameraTypeSegment.selectedSegmentIndex == 4) {
+        // 内置双广角
+        deviceType = AVCaptureDeviceTypeBuiltInDualWideCamera;
+    } else if (self.cameraTypeSegment.selectedSegmentIndex == 5) {
+        // 内置三摄
+        deviceType = AVCaptureDeviceTypeBuiltInTripleCamera;
+    } else {
+        assert(false);
+    }
+    return deviceType;
+}
+
+- (void)captureDeviceSubjectAreaDidChange:(NSNotification *)notif {
+    [self tryToResetAutoFocus];
+}
+
+- (AVCaptureDevice *)buildDevice:(AVCaptureDevicePosition )position type:(AVCaptureDeviceType)type {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithDeviceType:type mediaType:AVMediaTypeVideo position:position];
+    return device;
+}
+
+- (AVCaptureMetadataOutput *)buildMetadataOutput {
+    AVCaptureMetadataOutput *metadataOutput = [[AVCaptureMetadataOutput alloc] init];
+    return metadataOutput;
+}
+
+- (AVCaptureVideoDataOutput*)buildVideodataOutput {
+    AVCaptureVideoDataOutput *output = [[AVCaptureVideoDataOutput alloc] init];
+    output.alwaysDiscardsLateVideoFrames = YES;
+    id<AVCaptureVideoDataOutputSampleBufferDelegate> sampleDelegate = (id<AVCaptureVideoDataOutputSampleBufferDelegate>)self;
+    [output setSampleBufferDelegate:sampleDelegate queue:self.sessionQueue];
+    [output setVideoSettings:[NSDictionary dictionaryWithObject:[NSNumber numberWithInt:kCVPixelFormatType_32BGRA] forKey:(id)kCVPixelBufferPixelFormatTypeKey]];
+    return output;
+}
+
+- (AVCaptureMovieFileOutput *)buildMovefileOutput {
+    AVCaptureMovieFileOutput *movefileOutput = [[AVCaptureMovieFileOutput alloc] init];
+    return movefileOutput;
+}
+
+- (AVCapturePhotoOutput *)buildPhotoOutput {
+    AVCapturePhotoOutput *photoOutPhoto = [[AVCapturePhotoOutput alloc] init];
+    return photoOutPhoto;
+}
+
+- (void)startRecordingWithPath:(NSString *)outputPath {
+    NSURL *outputURL = [NSURL fileURLWithPath:outputPath];
+    
+    NSError *error = nil;
+    self.assetWriter = [AVAssetWriter assetWriterWithURL:outputURL fileType:AVFileTypeQuickTimeMovie error:&error];
+    
+    NSDictionary *videoSettings = @{
+        AVVideoCodecKey : AVVideoCodecTypeH264,
+        AVVideoWidthKey : @1920,
+        AVVideoHeightKey : @1080
+    };
+    
+    self.videoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
+    self.videoInput.expectsMediaDataInRealTime = YES;
+    
+    if ([self.assetWriter canAddInput:self.videoInput]) {
+        [self.assetWriter addInput:self.videoInput];
+    }
+    
+    [self.assetWriter startWriting];
+    [self.assetWriter startSessionAtSourceTime:kCMTimeZero];
+}
+
+- (void)appendSampleBuffer:(CMSampleBufferRef)sampleBuffer {
+    if (!self.isRecording) {
+        return;
+    }
+    
+    if (!self.isWriting) {
+        NSLog(@"startSessionAtSourceTime %s", __func__);
+        self.isWriting = true;
+        CMTime timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
+        [self.assetWriter startSessionAtSourceTime:timestamp];
+    }
+    
+    if (self.videoInput.isReadyForMoreMediaData) {
+        [self.videoInput appendSampleBuffer:sampleBuffer];
+        NSLog(@"appendSampleBuffer %s", __func__);
+    }
+}
+
+- (void)stopRecordingWithComplete:(void(^)(void))complete {
+    self.isRecording = NO;
+    [self.videoInput markAsFinished];
+    
+    [self.assetWriter finishWritingWithCompletionHandler:^{
+        NSLog(@"Finished writing video");
+        complete();
+    }];
+}
+
+- (void)saveVideoToPhotoLibraryWithPath:(NSString *)path {
+    NSURL *pathUrl = [NSURL fileURLWithPath:path];
+    
+    [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+        [PHAssetCreationRequest creationRequestForAssetFromVideoAtFileURL:pathUrl];
+    } completionHandler:^(BOOL success, NSError *error) {
+        if (success) {
+            NSLog(@"Video saved to photo library");
+        } else {
+            NSLog(@"Error saving video to photo library: %@", error.localizedDescription);
+        }
+    }];
+}
+
+-(NSString *)documentsDirectory{
+    NSString *documentsDirectory = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    return documentsDirectory;
+}
+
+#pragma mark - action
 - (IBAction)zoomSliderAction:(id)sender {
     self.logicZoomFactor = self.zoomSlider.value;
     self.physicsZoomFactor = [self caculatePhysicsZoomFactorFromLogicZoomFactor:self.logicZoomFactor];
@@ -454,16 +635,8 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     CGPoint adjustedPoint = CGPointApplyAffineTransform(touchPoint, transform);
     adjustedPoint = CGPointMake(adjustedPoint.y / previewSize.height, 1.0 - adjustedPoint.x / previewSize.width);
     
-    NSError *error;
-    [self.deviceInput.device lockForConfiguration:&error];
-    self.deviceInput.device.focusPointOfInterest = adjustedPoint;
-    self.deviceInput.device.focusMode = AVCaptureFocusModeAutoFocus;
-    [self.deviceInput.device unlockForConfiguration];
+    [self focusToPoint:adjustedPoint];
         
-    if (error) {
-        NSLog(@"error: %@", error);
-    }
-    
     self.circleViewConstaintX.constant = touchPoint.x;
     self.circleViewConstaintY.constant = touchPoint.y;
     self.focusCircleView.hidden = false;
@@ -474,171 +647,6 @@ typedef NS_ENUM(NSInteger, CaptureState) {
         self.focusCircleView.alpha = 1.0;
         self.focusCircleView.hidden = true;
     }];
-}
-
-- (CGFloat)caculatePhysicsZoomFactorFromLogicZoomFactor:(CGFloat)logicZoomFactor {
-    if (self.minLogicZoomFactor < 1.0) {
-        return logicZoomFactor * 2;
-    }
-    return logicZoomFactor;
-}
-
-- (CGFloat)maxLogicZoomFactorWithDeviceType:(AVCaptureDeviceType)type {
-    CGFloat factor = 10;
-    if (type == AVCaptureDeviceTypeBuiltInTripleCamera) {
-        AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
-        factor = (device.virtualDeviceSwitchOverVideoZoomFactors.lastObject.floatValue / 2) * 5;
-    } else if (type == AVCaptureDeviceTypeBuiltInDualCamera) {
-        if ([self buildDevice:self.devicePosition type:AVCaptureDeviceTypeBuiltInTelephotoCamera]) {
-            AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
-            NSArray<NSNumber *> *factors = device.virtualDeviceSwitchOverVideoZoomFactors;
-            factor = ceil(factors.lastObject.floatValue) * 5;
-        }
-    }
-    return factor;
-}
-
-- (AVCaptureDeviceType)selectDeviceType {
-    AVCaptureDeviceType deviceType;
-    if (self.cameraTypeSegment.selectedSegmentIndex == 0) {
-        // 内置广角摄像头
-        deviceType = AVCaptureDeviceTypeBuiltInWideAngleCamera;
-    } else if (self.cameraTypeSegment.selectedSegmentIndex == 1) {
-        // 内置长焦摄像头
-        deviceType = AVCaptureDeviceTypeBuiltInTelephotoCamera;
-        self.logicZoomFactor = 1.0;
-        self.minLogicZoomFactor = 1.0;
-    } else if (self.cameraTypeSegment.selectedSegmentIndex == 2) {
-        // 内置超广角
-        deviceType = AVCaptureDeviceTypeBuiltInUltraWideCamera;
-    } else if (self.cameraTypeSegment.selectedSegmentIndex == 3) {
-        // 内置双摄摄像头
-        deviceType = AVCaptureDeviceTypeBuiltInDualCamera;
-    } else if (self.cameraTypeSegment.selectedSegmentIndex == 4) {
-        // 内置双广角
-        deviceType = AVCaptureDeviceTypeBuiltInDualWideCamera;
-    } else if (self.cameraTypeSegment.selectedSegmentIndex == 5) {
-        // 内置三摄
-        deviceType = AVCaptureDeviceTypeBuiltInTripleCamera;
-    } else {
-        assert(false);
-    }
-    return deviceType;
-}
-
-- (void)captureDeviceSubjectAreaDidChange:(NSNotification *)notif {
-    if (CGPointEqualToPoint(self.deviceInput.device.focusPointOfInterest, CGPointMake(0.5, 0.5)) && self.deviceInput.device.focusMode == AVCaptureFocusModeContinuousAutoFocus) {
-        NSLog(@"无需再次对焦 %s", __func__);
-    } else {
-        NSLog(@"%s", __func__);
-        NSError *error;
-        [self.deviceInput.device lockForConfiguration:&error];
-        self.deviceInput.device.focusPointOfInterest = CGPointMake(0.5, 0.5);
-        self.deviceInput.device.focusMode = AVCaptureFocusModeContinuousAutoFocus;
-        [self.deviceInput.device unlockForConfiguration];
-        if (error) {
-            NSLog(@"error: %@", error);
-        }
-    }
-}
-- (AVCaptureDevice *)buildDevice:(AVCaptureDevicePosition )position type:(AVCaptureDeviceType)type {
-    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithDeviceType:type mediaType:AVMediaTypeVideo position:position];
-    return device;
-}
-
-- (AVCaptureMetadataOutput *)buildMetadataOutput {
-    AVCaptureMetadataOutput *metadataOutput = [[AVCaptureMetadataOutput alloc] init];
-    return metadataOutput;
-}
-
-- (AVCaptureVideoDataOutput*)buildVideodataOutput {
-    AVCaptureVideoDataOutput *output = [[AVCaptureVideoDataOutput alloc] init];
-    output.alwaysDiscardsLateVideoFrames = YES;
-    id<AVCaptureVideoDataOutputSampleBufferDelegate> sampleDelegate = (id<AVCaptureVideoDataOutputSampleBufferDelegate>)self;
-    [output setSampleBufferDelegate:sampleDelegate queue:self.sessionQueue];
-    [output setVideoSettings:[NSDictionary dictionaryWithObject:[NSNumber numberWithInt:kCVPixelFormatType_32BGRA] forKey:(id)kCVPixelBufferPixelFormatTypeKey]];
-    return output;
-}
-
-- (AVCaptureMovieFileOutput *)buildMovefileOutput {
-    AVCaptureMovieFileOutput *movefileOutput = [[AVCaptureMovieFileOutput alloc] init];
-    return movefileOutput;
-}
-
-- (AVCapturePhotoOutput *)buildPhotoOutput {
-    AVCapturePhotoOutput *photoOutPhoto = [[AVCapturePhotoOutput alloc] init];
-    return photoOutPhoto;
-}
-
-- (void)startRecordingWithPath:(NSString *)outputPath {
-    NSURL *outputURL = [NSURL fileURLWithPath:outputPath];
-    
-    NSError *error = nil;
-    self.assetWriter = [AVAssetWriter assetWriterWithURL:outputURL fileType:AVFileTypeQuickTimeMovie error:&error];
-    
-    NSDictionary *videoSettings = @{
-        AVVideoCodecKey : AVVideoCodecTypeH264,
-        AVVideoWidthKey : @1920,
-        AVVideoHeightKey : @1080
-    };
-    
-    self.videoInput = [AVAssetWriterInput assetWriterInputWithMediaType:AVMediaTypeVideo outputSettings:videoSettings];
-    self.videoInput.expectsMediaDataInRealTime = YES;
-    
-    if ([self.assetWriter canAddInput:self.videoInput]) {
-        [self.assetWriter addInput:self.videoInput];
-    }
-    
-    [self.assetWriter startWriting];
-    [self.assetWriter startSessionAtSourceTime:kCMTimeZero];
-}
-
-
-- (void)appendSampleBuffer:(CMSampleBufferRef)sampleBuffer {
-    if (!self.isRecording) {
-        return;
-    }
-    
-    if (!self.isWriting) {
-        NSLog(@"startSessionAtSourceTime %s", __func__);
-        self.isWriting = true;
-        CMTime timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
-        [self.assetWriter startSessionAtSourceTime:timestamp];
-    }
-    
-    if (self.videoInput.isReadyForMoreMediaData) {
-        [self.videoInput appendSampleBuffer:sampleBuffer];
-        NSLog(@"appendSampleBuffer %s", __func__);
-    }
-}
-
-- (void)stopRecordingWithComplete:(void(^)(void))complete {
-    self.isRecording = NO;
-    [self.videoInput markAsFinished];
-    
-    [self.assetWriter finishWritingWithCompletionHandler:^{
-        NSLog(@"Finished writing video");
-        complete();
-    }];
-}
-
-- (void)saveVideoToPhotoLibraryWithPath:(NSString *)path {
-    NSURL *pathUrl = [NSURL fileURLWithPath:path];
-    
-    [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-        [PHAssetCreationRequest creationRequestForAssetFromVideoAtFileURL:pathUrl];
-    } completionHandler:^(BOOL success, NSError *error) {
-        if (success) {
-            NSLog(@"Video saved to photo library");
-        } else {
-            NSLog(@"Error saving video to photo library: %@", error.localizedDescription);
-        }
-    }];
-}
-
--(NSString *)documentsDirectory{
-    NSString *documentsDirectory = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    return documentsDirectory;
 }
 
 // MARK: - AVCaptureMetadataOutputObjectsDelegate Methods
