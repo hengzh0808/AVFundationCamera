@@ -14,7 +14,6 @@
 		2FB790AC2CB4C94800BE7830 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2FB790AB2CB4C94800BE7830 /* Assets.xcassets */; };
 		2FB790AF2CB4C94800BE7830 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2FB790AD2CB4C94800BE7830 /* LaunchScreen.storyboard */; };
 		2FB790B22CB4C94800BE7830 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 2FB790B12CB4C94800BE7830 /* main.m */; };
-		2FD12E5B2CB942A8001DD8F1 /* ViewController2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FD12E5A2CB942A8001DD8F1 /* ViewController2.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,7 +30,6 @@
 		2FB790B02CB4C94800BE7830 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		2FB790B12CB4C94800BE7830 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		2FD12E592CB942A8001DD8F1 /* AVFundationCamera-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "AVFundationCamera-Bridging-Header.h"; sourceTree = "<group>"; };
-		2FD12E5A2CB942A8001DD8F1 /* ViewController2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController2.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,7 +68,6 @@
 				2FB790A32CB4C94600BE7830 /* SceneDelegate.m */,
 				2FB790A52CB4C94600BE7830 /* ViewController.h */,
 				2FB790A62CB4C94600BE7830 /* ViewController.m */,
-				2FD12E5A2CB942A8001DD8F1 /* ViewController2.swift */,
 				2FB790A82CB4C94600BE7830 /* Main.storyboard */,
 				2FB790AB2CB4C94800BE7830 /* Assets.xcassets */,
 				2FB790AD2CB4C94800BE7830 /* LaunchScreen.storyboard */,
@@ -152,7 +149,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				2FD12E5B2CB942A8001DD8F1 /* ViewController2.swift in Sources */,
 				2FB790A72CB4C94600BE7830 /* ViewController.m in Sources */,
 				2FB790A12CB4C94600BE7830 /* AppDelegate.m in Sources */,
 				2FB790B22CB4C94800BE7830 /* main.m in Sources */,

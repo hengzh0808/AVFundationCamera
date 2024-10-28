@@ -65,6 +65,8 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 
 @property (atomic, assign) AVCaptureSessionPreset sessionPreset;
 
+@property (atomic, assign) AVCaptureDevicePosition devicePosition;
+
 @property (nonatomic, assign) CGFloat logicZoomFactor;
 
 @property (nonatomic, assign) CGFloat minLogicZoomFactor;
@@ -83,6 +85,7 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 @property (atomic, copy) NSString *filename;
 @property (nonatomic, assign) double startTime;
 @property (nonatomic, strong) AVAssetWriterInputPixelBufferAdaptor *adapter;
+@property (nonatomic, strong) NSArray<AVMetadataObject *> *detectFaceObjs;
 
 @end
 
@@ -102,11 +105,12 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     self.presetTypeSegment.selectedSegmentIndex = 1;
     self.stabilizationSegment.selectedSegmentIndex = 1;
     self.previewTypeSegment.selectedSegmentIndex = 1;
-    self.cameraTypeSegment.selectedSegmentIndex = 4;
+    self.cameraTypeSegment.selectedSegmentIndex = 0;
     self.previewTypeSegment.selectedSegmentIndex = 1;
     
     
     self.deviceType = [self selectDeviceType];
+    self.devicePosition = AVCaptureDevicePositionBack;
     self.sessionPreset = AVCaptureSessionPreset1920x1080;
 //    self.sessionPreset = AVCaptureSessionPresetPhoto
     
@@ -180,16 +184,17 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     self.preivewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
     [self.preivewView.layer addSublayer:self.preivewLayer];
     
-    [self configDefaultWithOutput:self.videodataOutput device:self.deviceInput.device];
+    [self configDefaultDevice:self.deviceInput.device];
+    [self configDefaultMetaDetect];
 }
 
 - (void)refreshZoomSlider {
     if (self.deviceType == AVCaptureDeviceTypeBuiltInDualCamera) {
         // 双摄像头单独判断
-        if ([self buildDevice:AVCaptureDevicePositionBack type:AVCaptureDeviceTypeBuiltInTelephotoCamera] != nil) {
+        if ([self buildDevice:self.devicePosition type:AVCaptureDeviceTypeBuiltInTelephotoCamera] != nil) {
             // 内置为长焦
             self.minLogicZoomFactor = 1.0;
-        } else if ([self buildDevice:AVCaptureDevicePositionBack type:AVCaptureDeviceTypeBuiltInUltraWideCamera] != nil) {
+        } else if ([self buildDevice:self.devicePosition type:AVCaptureDeviceTypeBuiltInUltraWideCamera] != nil) {
             // 内置为超广角
             self.minLogicZoomFactor = 0.5;
         } else {
@@ -214,8 +219,10 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 }
 
 - (void)configDeviceWihtType:(AVCaptureDeviceType)type {
-    AVCaptureDevice *device = [self buildDevice:AVCaptureDevicePositionBack type:type];
+    AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
     NSLog(@"virtualDeviceSwitchOverVideoZoomFactors %@", [device virtualDeviceSwitchOverVideoZoomFactors]);
+    [device addObserver:self forKeyPath:@"focusPointOfInterest" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:nil];
+    [device addObserver:self forKeyPath:@"lensPosition" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:nil];
     
     AVCaptureDeviceInput *deviceInput = [AVCaptureDeviceInput deviceInputWithDevice:device error:nil];
     
@@ -224,13 +231,13 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     [self.session beginConfiguration];
     [self.session removeInput:self.deviceInput];
     [self.session addInput:deviceInput];
-    [self configDefaultWithOutput:self.videodataOutput device:deviceInput.device];
+    [self configDefaultDevice:deviceInput.device];
     [self.session commitConfiguration];
     
     self.deviceInput = deviceInput;
 }
 
-- (void)configDefaultWithOutput:(AVCaptureOutput *)output device:(AVCaptureDevice *)device {
+- (void)configDefaultDevice:(AVCaptureDevice *)device {
     [device lockForConfiguration:nil];
     device.smoothAutoFocusEnabled = YES;
     device.videoZoomFactor = self.physicsZoomFactor;
@@ -239,6 +246,13 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     device.activeVideoMinFrameDuration = CMTimeMake(1, 30);
     device.activeVideoMaxFrameDuration = CMTimeMake(1, 30);
     [device unlockForConfiguration];
+}
+
+- (void)configDefaultMetaDetect {
+    if ([self.metadataOutput.availableMetadataObjectTypes containsObject:AVMetadataObjectTypeFace]) {
+        self.metadataOutput.metadataObjectTypes = @[AVMetadataObjectTypeFace];
+    }
+    [self.metadataOutput setMetadataObjectsDelegate:self queue:self.sessionQueue];
 }
 
 - (void)configStabilizationModeWithOutput:(AVCaptureOutput *)output device:(AVCaptureDevice *)device {
@@ -323,7 +337,7 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     }
     
     [self.session commitConfiguration];
-    [self configDefaultWithOutput:self.videodataOutput device:self.deviceInput.device];
+    [self configDefaultDevice:self.deviceInput.device];
     
     self.sessionPreset = self.session.sessionPreset;
 }
@@ -472,11 +486,11 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 - (CGFloat)maxLogicZoomFactorWithDeviceType:(AVCaptureDeviceType)type {
     CGFloat factor = 10;
     if (type == AVCaptureDeviceTypeBuiltInTripleCamera) {
-        AVCaptureDevice *device = [self buildDevice:AVCaptureDevicePositionBack type:type];
+        AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
         factor = (device.virtualDeviceSwitchOverVideoZoomFactors.lastObject.floatValue / 2) * 5;
     } else if (type == AVCaptureDeviceTypeBuiltInDualCamera) {
-        if ([self buildDevice:AVCaptureDevicePositionBack type:AVCaptureDeviceTypeBuiltInTelephotoCamera]) {
-            AVCaptureDevice *device = [self buildDevice:AVCaptureDevicePositionBack type:type];
+        if ([self buildDevice:self.devicePosition type:AVCaptureDeviceTypeBuiltInTelephotoCamera]) {
+            AVCaptureDevice *device = [self buildDevice:self.devicePosition type:type];
             NSArray<NSNumber *> *factors = device.virtualDeviceSwitchOverVideoZoomFactors;
             factor = ceil(factors.lastObject.floatValue) * 5;
         }
@@ -534,8 +548,6 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 
 - (AVCaptureMetadataOutput *)buildMetadataOutput {
     AVCaptureMetadataOutput *metadataOutput = [[AVCaptureMetadataOutput alloc] init];
-    self.metadataOutput.metadataObjectTypes = @[AVMetadataObjectTypeFace];
-    [metadataOutput setMetadataObjectsDelegate:self queue:self.sessionQueue];
     return metadataOutput;
 }
 
@@ -631,7 +643,14 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 
 // MARK: - AVCaptureMetadataOutputObjectsDelegate Methods
 - (void)captureOutput:(AVCaptureOutput *)output didOutputMetadataObjects:(NSArray<__kindof AVMetadataObject *> *)metadataObjects fromConnection:(AVCaptureConnection *)connection {
-    NSLog(@"%s", __func__);
+    NSMutableArray *detectFaceObjs = [NSMutableArray array];
+    for (AVMetadataObject *obj in metadataObjects) {
+        if ([obj.type isEqualToString:AVMetadataObjectTypeFace]) {
+            [detectFaceObjs addObject:obj];
+        }
+        NSLog(@"AVCaptureMetadataOutput detect %@ %@", obj.type, NSStringFromCGRect(obj.bounds));
+    }
+    self.detectFaceObjs = detectFaceObjs;
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate Methods
@@ -649,9 +668,10 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     CGImageRef cgImage = [context createCGImage:ciImage fromRect:frame];
     UIImage *image = [UIImage imageWithCGImage:cgImage];
     
+    NSArray<AVMetadataObject *> *faces = [NSArray arrayWithArray:self.detectFaceObjs];
     // 更新 UI
     dispatch_async(dispatch_get_main_queue(), ^{
-        self.renderView.image = [self rotateImageRight90:image]; // 将 imageView 替换为你的 UIImageView 实例
+        self.renderView.image = [self rotateImageRight90:image faces:faces]; // 将 imageView 替换为你的 UIImageView 实例
     });
     
     CGImageRelease(cgImage);
@@ -715,20 +735,43 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 
 }
 
-- (UIImage *)rotateImageRight90:(UIImage *)image {
-    CGSize size = CGSizeMake(image.size.height, image.size.width);
-    UIGraphicsBeginImageContext(size);
-    CGContextRef context = UIGraphicsGetCurrentContext();
-    
-    // 平移和旋转
-    CGContextTranslateCTM(context, size.width / 2, size.height / 2);
-    CGContextRotateCTM(context, M_PI_2);
-    
-    // 绘制图像
-    [image drawInRect:CGRectMake(-image.size.width / 2, -image.size.height / 2, image.size.width, image.size.height)];
-    
-    UIImage *rotatedImage = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
+- (UIImage *)rotateImageRight90:(UIImage *)image faces:(NSArray<AVMetadataObject *> *)detectFaceObjs {
+    UIImage *faceImg = ^(UIImage *image){
+        CGSize size = CGSizeMake(image.size.width, image.size.height);
+        UIGraphicsBeginImageContext(size);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        [image drawAtPoint:CGPointZero];
+        // 设置边框颜色（例如红色）
+        CGContextSetStrokeColorWithColor(context, [UIColor redColor].CGColor);
+        // 设置边框宽度
+        CGContextSetLineWidth(context, 3.0);
+        // 绘制正方形
+        for (AVMetadataObject *faceObj in detectFaceObjs) {
+            CGRect faceRect = CGRectMake(faceObj.bounds.origin.x * image.size.width,
+                                         faceObj.bounds.origin.y * image.size.height,
+                                         faceObj.bounds.size.width * image.size.width,
+                                         faceObj.bounds.size.height * image.size.height);
+            CGContextStrokeRect(context, faceRect);
+        }
+        UIImage *faceImg = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        
+        return faceImg;
+    }(image);
+
+    UIImage *rotatedImage = ^(UIImage *image){
+        CGSize size = CGSizeMake(image.size.height, image.size.width);
+        UIGraphicsBeginImageContext(size);
+        CGContextRef context = UIGraphicsGetCurrentContext();
+        // 平移和旋转
+        CGContextTranslateCTM(context, size.width / 2, size.height / 2);
+        CGContextRotateCTM(context, M_PI_2);
+        // 绘制图像
+        [image drawInRect:CGRectMake(-image.size.width / 2, -image.size.height / 2, image.size.width, image.size.height)];
+        UIImage *rotatedImage = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+        return rotatedImage;
+    }(faceImg);
     
     return rotatedImage;
 }
@@ -818,7 +861,9 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
-    NSLog(@"%s, change: %@", __func__, change);
+//    [device addObserver:self forKeyPath:@"focusPointOfInterest" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:nil];
+//    [device addObserver:self forKeyPath:@"lensPosition" options:NSKeyValueObservingOptionNew | NSKeyValueObservingOptionOld context:nil];
+    NSLog(@"%@, change: %@", keyPath, change);
 }
 
 @end
