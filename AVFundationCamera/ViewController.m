@@ -45,6 +45,8 @@ typedef NS_ENUM(NSInteger, CaptureState) {
 
 @property (weak, nonatomic) IBOutlet UISlider *zoomSlider;
 
+@property (nonatomic, strong) UIView *faceView;
+
 @property (nonatomic) dispatch_queue_t sessionQueue;
 /// AVCaptureSession对象来执行输入设备和输出设备之间的数据传递
 @property (nonatomic, strong) AVCaptureSession* session;
@@ -476,6 +478,28 @@ typedef NS_ENUM(NSInteger, CaptureState) {
     return documentsDirectory;
 }
 
+- (void)showFaceViewWithRect:(CGRect)rect {
+    // 向右转90度
+    CGPoint newPoint = CGPointMake(1 - rect.origin.y - rect.size.height, rect.origin.x);
+    CGRect newRect = CGRectMake(newPoint.x, newPoint.y, rect.size.height, rect.size.width);
+    ^{
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.faceView == nil) {
+                self.faceView = [[UIView alloc] init];
+                self.faceView.backgroundColor = [UIColor clearColor];
+                self.faceView.layer.borderColor = [UIColor greenColor].CGColor;
+                self.faceView.layer.borderWidth = 3;
+            }
+            
+            [self.focusView addSubview:self.faceView];
+            self.faceView.frame = CGRectMake(newRect.origin.x * self.focusView.frame.size.width,
+                                             newRect.origin.y * self.focusView.frame.size.height,
+                                             newRect.size.width * self.focusView.frame.size.width,
+                                             newRect.size.height * self.focusView.frame.size.height);
+        });
+    }();
+}
+
 #pragma mark - action
 - (IBAction)zoomSliderAction:(id)sender {
     self.logicZoomFactor = self.zoomSlider.value;
@@ -659,6 +683,9 @@ typedef NS_ENUM(NSInteger, CaptureState) {
         NSLog(@"AVCaptureMetadataOutput detect %@ %@", obj.type, NSStringFromCGRect(obj.bounds));
     }
     self.detectFaceObjs = detectFaceObjs;
+    if (self.detectFaceObjs.count > 0) {
+        [self showFaceViewWithRect:self.detectFaceObjs.firstObject.bounds];
+    }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate Methods
@@ -780,6 +807,7 @@ typedef NS_ENUM(NSInteger, CaptureState) {
         UIGraphicsEndImageContext();
         return rotatedImage;
     }(faceImg);
+//    }(image);
     
     return rotatedImage;
 }
